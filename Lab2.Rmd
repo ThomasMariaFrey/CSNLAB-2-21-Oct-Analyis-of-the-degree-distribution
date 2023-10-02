@@ -1,0 +1,211 @@
+---
+title: "CSN LAB2"
+author: "Fatima"
+date: "2023-09-21"
+output: html_document
+---
+```{r}
+library(rstudioapi)
+require("stats4") # for MLE
+require("VGAM") # for the Riemann-zeta function
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd(dirname(getSourceEditorContext()$path))
+```
+
+
+# 1 Introduction
+
+```{r cars}
+data_dir <- "./in-degree_sequences/data/"
+languages <- unlist(lapply(list.files(data_dir), function(x) gsub( "_in-degree_sequence.txt" , "", x)))
+
+data <- data.frame(language = character(), degree_sequence = numeric())
+for (f in list.files(data_dir)){
+  degree_sequence <- read.table(paste0(data_dir, f),header = FALSE)$V1
+  degree_sequence <- degree_sequence[degree_sequence != 0] #removing unconnected nodes
+  lang <- gsub("_in-degree_sequence.txt" , "", f)
+  data <- rbind(data, data.frame(language = lang, degree_sequence = degree_sequence))
+}
+```
+
+
+```{r cars}
+#source("summary_table.R")
+```
+
+```{r cars}
+dt_metrics <- data.frame(Language = character(), N = numeric(),  MaximumDegree = numeric(), degree = numeric(), M.N = numeric(), N.M = numeric())
+
+for(lang in languages){
+  degree_sequence <- as.data.frame(data[data$language == lang,]$degree_sequence)
+  N <- dim(degree_sequence)[1]
+  M <- sum(degree_sequence)
+  dt_aux <- data.frame(
+    Language = lang,
+    N = N,
+    MaximumDegree = max(degree_sequence),
+    M.N = M/N,
+    N.M = N/M
+  )
+  dt_metrics <- rbind(dt_metrics, dt_aux)
+}
+View(dt_metrics)
+```
+
+
+#2 Visualization
+
+
+```{r cars}
+#normal scale
+for(lang in languages){
+  degree_sequence <- as.data.frame(data[data$language == lang,]$degree_sequence)
+  degree_spectrum = table(degree_sequence)
+  barplot(degree_spectrum, main = lang,
+  xlab = "degree", ylab = "number of vertices")
+}
+```
+
+```{r cars}
+for(lang in languages){
+  #log-log scale
+  barplot(degree_spectrum, main = lang,
+  xlab = "degree", ylab = "number of vertices", log = "xy")
+}
+```
+
+# 3 Parameters estimation by maximum likelihood
+
+# log likelihood function
+
+
+```{r}
+minus_log_likelihood_zeta <- function(gamma) {
+      gamma * sum(log(x)) + length(x) * log(zeta(gamma))
+}
+
+minus_log_likelihood_zeta2 <- function(gamma=2) {
+      loglikelihood <- -2 * sum(log(x)) - length(x) * log(pi/6)
+      return (loglikelihood)
+}
+
+minus_log_likelihood_disp_poisson <- function(lambda){
+      M <- sum(x)
+      N <- length(x)
+      e <- exp(1)
+      C <- 0
+      for (i in 1:length(x)) {if(x[i] > 1) {C <- C + sum(log(seq(2:x[i])))}}
+      loglikelihood <- M*log(lambda) - N*(lambda + log(1-e^(-lambda))) - C
+      return(-1*loglikelihood)
+}
+
+minus_log_likelihood_disp_geometric <- function(q){
+      M <- sum(x)
+      N <- length(x)
+      loglikelihood <- (M - N)*log(1 - q) + N*log(q)
+      return(-1*loglikelihood)
+}
+
+get_AIC <- function(m2logL,K,N) { m2logL + 2*K*N/(N-K-1)}
+
+```
+
+
+# finding best parametrs values
+```{r cars}
+best_attr_values <- function(x){
+  
+      print("-------------------- Zeta Dist. --------------------")
+
+      mle_zeta <- mle(minus_log_likelihood_zeta,
+                start = list(gamma = 2),
+                method = "L-BFGS-B",
+                lower = c(1.0000001))
+      val <- attributes(summary(mle_zeta))$coef[1]
+      print(paste("gamma= ", val))
+      aic <- get_AIC(attributes(summary(mle_zeta))$m2logL, 1, N)
+      print(paste("AIC= ", aic))
+
+      print("-------------------- Zeta Dist. gamma=2 --------------------")
+      
+      # mle_zeta2 <- mle(minus_log_likelihood_zeta2,
+      #                 start = list(gamma = 2),
+      #                 method = "L-BFGS-B")
+      # 
+      # val <- attributes(summary(mle_zeta2))$coef[1]
+      # aic <- get_AIC(attributes(summary(mle_zeta2))$m2logL, 1, N)
+      #print(paste("AIC= ", aic))
+
+      print("-------------------- Displaced Poisson --------------------")
+      
+      M <- sum(log(x))
+      N <- length(x)
+      
+      mle_disp_poisson <- mle(minus_log_likelihood_disp_poisson,
+                      start = list(lambda = M/N),
+                      method = "L-BFGS-B",
+                      lower = c(1.000001))
+      
+      val <- attributes(summary(mle_disp_poisson))$coef[1]
+      print(paste("lambda= ", val))
+      aic <- get_AIC(attributes(summary(mle_disp_poisson))$m2logL, 1, N)
+      print(paste("AIC= ", aic))
+
+      print("-------------------- Displaced Geometric --------------------")
+      
+      mle_disp_geometric <- mle(minus_log_likelihood_disp_geometric,
+                      start = list(q = M/N),# USING M/N INSTEAD OF N/M
+                      method = "L-BFGS-B",
+                      lower = c(0.000001))
+      
+      val <- attributes(summary(mle_disp_geometric))$coef[1]
+      print(paste("q= ", val))
+      aic <- get_AIC(attributes(summary(mle_disp_geometric))$m2logL, 1, N)
+      print(paste("AIC= ", aic))
+}
+```
+
+
+```{r}
+for(lang in languages){
+  x <- as.data.frame(data[data$language == lang,]$degree_sequence)
+  print("___________________________________________________________________________")
+  print(paste("#########################", lang, "#############################"))
+  print("___________________________________________________________________________")
+  best_attr_values(x)
+}
+```
+
+
+
+```{r cars}
+x <- as.data.frame(data[data$language == "Arabic",]$degree_sequence)
+
+M <- sum(log(x))
+N <- length(x)
+      
+mle_disp_geometric <- mle(minus_log_likelihood_disp_geometric,
+                  start = list(q = M/N),
+                  method = "L-BFGS-B",
+                  lower = c(0.000001))
+  
+  val <- attributes(summary(mle_disp_geometric))$coef[1]
+  print(paste("q= ", val))
+  aic <- get_AIC(attributes(summary(mle_disp_geometric))$m2logL, 1, N)
+  print(paste("AIC= ", aic))
+```
+
+```{r cars}
+
+```
+
+```{r cars}
+
+```
+
+```{r cars}
+
+```
