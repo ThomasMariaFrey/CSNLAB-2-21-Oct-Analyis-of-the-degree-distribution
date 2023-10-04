@@ -8,17 +8,41 @@ output: html_document
 library(rstudioapi)
 require("stats4") # for MLE
 require("VGAM") # for the Riemann-zeta function
-```
+library(bbmle)
+library(ggplot2)
 
-```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 setwd(dirname(getSourceEditorContext()$path))
 ```
 
+#auxiliar functions
+
+```{r}
+sum_log_terms <- function(k) {
+  if(k > 1) sum(log(2:k))
+  else 0
+}
+
+get_C <- function(x){
+      C <- c()
+      for (k in x) {C <- c(C, sum_log_terms(k))}
+      return (sum(C))
+}
+
+h_fct <- function(gamma, k_max) {
+  out <- 0
+  for (x in 1:k_max) {
+    out <- out + x^(-gamma)
+  }
+  return(out)
+}
+
+```
 
 # 1 Introduction
 
 ```{r cars}
+#save all the data into a dataframe
 data_dir <- "./in-degree_sequences/data/"
 languages <- unlist(lapply(list.files(data_dir), function(x) gsub( "_in-degree_sequence.txt" , "", x)))
 
@@ -31,13 +55,14 @@ for (f in list.files(data_dir)){
 }
 ```
 
-
 ```{r cars}
-#source("summary_table.R")
-```
-
-```{r cars}
-dt_metrics <- data.frame(Language = character(), N = numeric(),  MaximumDegree = numeric(), degree = numeric(), M.N = numeric(), N.M = numeric())
+#TABLE 1 
+table1 <- data.frame(Language = character(), 
+                     N = numeric(),  
+                     MaximumDegree = numeric(), 
+                     degree = numeric(), 
+                     M.N = numeric(), 
+                     N.M = numeric())
 
 for(lang in languages){
   degree_sequence <- as.data.frame(data[data$language == lang,]$degree_sequence)
@@ -50,9 +75,8 @@ for(lang in languages){
     M.N = M/N,
     N.M = N/M
   )
-  dt_metrics <- rbind(dt_metrics, dt_aux)
+  table1 <- rbind(table1, dt_aux)
 }
-View(dt_metrics)
 ```
 
 
@@ -70,43 +94,39 @@ for(lang in languages){
 ```
 
 ```{r cars}
+#log-log scale
 for(lang in languages){
-  #log-log scale
   barplot(degree_spectrum, main = lang,
   xlab = "degree", ylab = "number of vertices", log = "xy")
 }
 ```
 
-# 3 Parameters estimation by maximum likelihood
+# 3 PARAMETERS ESTIMATION & MODEL SELECTION
 
-# log likelihood function
 
+## log likelihood functions
 
 ```{r}
 minus_log_likelihood_zeta <- function(gamma) {
       gamma * sum(log(x)) + length(x) * log(zeta(gamma))
 }
 
-minus_log_likelihood_zeta2 <- function(gamma=2) {
-      loglikelihood <- -2 * sum(log(x)) - length(x) * log(pi/6)
-      return (loglikelihood)
+minus_log_likelihood_zeta_right_truncated <- function(gamma, k_max) {
+      gamma * sum(log(x)) + length(x) * log(h_fct(gamma, k_max)) 
 }
 
 minus_log_likelihood_disp_poisson <- function(lambda){
       M <- sum(x)
       N <- length(x)
       e <- exp(1)
-      C <- 0
-      for (i in 1:length(x)) {if(x[i] > 1) {C <- C + sum(log(seq(2:x[i])))}}
+      C <- get_C(x)
       loglikelihood <- M*log(lambda) - N*(lambda + log(1-e^(-lambda))) - C
       return(-1*loglikelihood)
 }
 
 minus_log_likelihood_disp_geometric <- function(q){
-      M <- sum(x)
-      N <- length(x)
-      loglikelihood <- (M - N)*log(1 - q) + N*log(q)
-      return(-1*loglikelihood)
+  n <- length(x)
+  -((sum(x) - n) * log(1 - q) + n * log(q))
 }
 
 get_AIC <- function(m2logL,K,N) { m2logL + 2*K*N/(N-K-1)}
@@ -114,98 +134,252 @@ get_AIC <- function(m2logL,K,N) { m2logL + 2*K*N/(N-K-1)}
 ```
 
 
-# finding best parametrs values
+## finding best parametrs values and AIC
+
 ```{r cars}
-best_attr_values <- function(x){
+best_param_values <- function(x){
   
-      print("-------------------- Zeta Dist. --------------------")
+      params <- c()
+      aics <- c()
+
+      # -------------------- Displaced Poisson --------------------
+
+      mle_disp_poisson <- mle(minus_log_likelihood_disp_poisson,
+                      start = list(lambda = sum(x)/length(x)), method = "L-BFGS-B",  #M/N
+                      lower = c(0.000001))
+
+      val <- attributes(summary(mle_disp_poisson))$coef[1]
+      aic <- get_AIC(attributes(summary(mle_disp_poisson))$m2logL, 1, N)
+      params <- c(params, val)
+      aics <- c(aics, aic)
+
+      #------------ Displaced Geometric ---------------
+
+      mle_disp_geometric <- mle(minus_log_likelihood_disp_geometric,
+                                start=list(q = length(x)/sum(x))) #N/M
+
+      val <- attributes(summary(mle_disp_geometric))$coef[1]
+      aic <- get_AIC(attributes(summary(mle_disp_geometric))$m2logL, 1, N)
+      params <- c(params, val)
+      aics <- c(aics, aic)
+
+
+      # -------------------- Zeta Dist. --------------------
 
       mle_zeta <- mle(minus_log_likelihood_zeta,
-                start = list(gamma = 2),
-                method = "L-BFGS-B",
-                lower = c(1.0000001))
+                start = list(gamma = 2), method = "L-BFGS-B", lower = c(1.0000001))
+
       val <- attributes(summary(mle_zeta))$coef[1]
-      print(paste("gamma= ", val))
       aic <- get_AIC(attributes(summary(mle_zeta))$m2logL, 1, N)
-      print(paste("AIC= ", aic))
+      params <- c(params, val)
+      aics <- c(aics, aic)
 
-      print("-------------------- Zeta Dist. gamma=2 --------------------")
-      
-      # mle_zeta2 <- mle(minus_log_likelihood_zeta2,
-      #                 start = list(gamma = 2),
-      #                 method = "L-BFGS-B")
-      # 
-      # val <- attributes(summary(mle_zeta2))$coef[1]
-      # aic <- get_AIC(attributes(summary(mle_zeta2))$m2logL, 1, N)
-      #print(paste("AIC= ", aic))
+      # -------------------- Zeta Dist. Gamma = 2 --------------------
 
-      print("-------------------- Displaced Poisson --------------------")
+      aic <- get_AIC(2*minus_log_likelihood_zeta(2), 1, N)
+      aics <- c(aics, aic)
       
-      M <- sum(log(x))
-      N <- length(x)
-      
-      mle_disp_poisson <- mle(minus_log_likelihood_disp_poisson,
-                      start = list(lambda = M/N),
-                      method = "L-BFGS-B",
-                      lower = c(1.000001))
-      
-      val <- attributes(summary(mle_disp_poisson))$coef[1]
-      print(paste("lambda= ", val))
-      aic <- get_AIC(attributes(summary(mle_disp_poisson))$m2logL, 1, N)
-      print(paste("AIC= ", aic))
+      # -------------------- Zeta Rigth Trucated --------------
 
-      print("-------------------- Displaced Geometric --------------------")
+      mle_zeta <- mle2(minus_log_likelihood_zeta_right_truncated,
+                start = list(gamma = 2, k_max = length(x)), lower = c(gamma = 1.0001, k_max = max(x)), method = "L-BFGS-B")
+
+      val1 <- attributes(summary(mle_zeta))$coef[1]
+      val2 <- attributes(summary(mle_zeta))$coef[2]
+      aic <- get_AIC(attributes(summary(mle_zeta))$m2logL, 1, N)
+      params <- c(params, val1, val2)
+      aics <- c(aics, aic)
+  
       
-      mle_disp_geometric <- mle(minus_log_likelihood_disp_geometric,
-                      start = list(q = M/N),# USING M/N INSTEAD OF N/M
-                      method = "L-BFGS-B",
-                      lower = c(0.000001))
-      
-      val <- attributes(summary(mle_disp_geometric))$coef[1]
-      print(paste("q= ", val))
-      aic <- get_AIC(attributes(summary(mle_disp_geometric))$m2logL, 1, N)
-      print(paste("AIC= ", aic))
+      return(list(params, aics))
 }
+
 ```
 
+# TABLE 3 & TABLE 4
 
 ```{r}
+table3 <- data.frame(
+  Language = character(),
+  `lambda` = numeric(), 
+  `q` = numeric(),
+  `gamma1` = numeric(),
+  `gamma2` = numeric(),
+  `k_max` = numeric()
+  )
+
+table4 <- data.frame(
+  Language = character(),
+  `AIC Poisson` = numeric(), 
+  `AIC Dis.Geometric` = numeric(),
+  `AIC Zeta` = numeric(),
+  `AIC Zeta.Gamma=2` = numeric(),
+  `AIC Zeta_rigth_truc` = numeric()
+  )
+
+i = 1
 for(lang in languages){
-  x <- as.data.frame(data[data$language == lang,]$degree_sequence)
-  print("___________________________________________________________________________")
-  print(paste("#########################", lang, "#############################"))
-  print("___________________________________________________________________________")
-  best_attr_values(x)
+  x <- data[data$language == lang,]$degree_sequence
+  res <- best_param_values(x)
+  table3[i,] <- c(lang, unlist(res[1]))
+  res2 <- unlist(res[2]) - min(unlist(res[2])) #incremental AIC
+  table4[i,] <- c(lang, res2)
+  i <- i + 1
 }
+
 ```
 
 
+# 4 RESULTS
 
-```{r cars}
-x <- as.data.frame(data[data$language == "Arabic",]$degree_sequence)
+```{r}
+table1 #Summary of the properties of the degree sequences
+table3 #Summary of the most likely parameters
+table4 #The AIC difference (∆) of a model on a given source.
+```
+# PLOTS
 
-M <- sum(log(x))
-N <- length(x)
-      
-mle_disp_geometric <- mle(minus_log_likelihood_disp_geometric,
-                  start = list(q = M/N),
-                  method = "L-BFGS-B",
-                  lower = c(0.000001))
+```{r}
+# distribution functions
+geometric.distribution <- function(k, q){
+  return(q*(1-q)^(k-1))
+}
+
+poisson.distribution <- function(k, lambda){
+  num <- lambda^k * exp(1)^(-lambda)
+  den <- factorial(k)*(1 - exp(1)^(-lambda))
+  return(num/den)
+}
+
+zeta.distribution <- function(k, gamma){
+  num <- k^(-gamma)
+  den <- zeta(gamma)
+  return(num/den)
+}
+
+zeta.distribution.right.trucated <- function(k, gamma, k_max){
+  num <- k^(-gamma)
+  den <- h_fct(k_max, gamma)
+  return(num/den)
+}
+
+```
+
+```{r}
+#for every language plot the frequency of each k and every distribution func.
+for(lang in languages){
+  n <- 50
+  x <- data[data$language == lang,]$degree_sequence
+  params <- table3[table3$Language == lang,]
+  tab <- table(x)[1:n]
+  seq <- seq(1:n)
   
-  val <- attributes(summary(mle_disp_geometric))$coef[1]
-  print(paste("q= ", val))
-  aic <- get_AIC(attributes(summary(mle_disp_geometric))$m2logL, 1, N)
-  print(paste("AIC= ", aic))
+  jpeg(paste0("./latex_files/plot_", lang, ".jpeg")) 
+
+  # frequency plot
+  barplot(tab, xlab = "k", ylab = "Frequency", main = paste(lang, "- Barplot & Probability Distribution"))
+  
+  #geometric.distribution line
+  res <- unlist(lapply(seq, function(k) geometric.distribution(k = k, q = as.numeric(params$q))))
+  lines(seq, res * max(table(x)), col = "yellow", type = "l", lwd = 2)
+  #poisson.distribution line
+  res <- unlist(lapply(seq, function(k) poisson.distribution(k = k, lambda = as.numeric(params$lambda))))
+  lines(seq, res * max(table(x)), col = "purple", type = "l", lwd = 2)
+  #zeta.distribution line
+  res <- unlist(lapply(seq, function(k) zeta.distribution(k = k, gamma = as.numeric(params$gamma1))))
+  lines(seq, res * max(table(x)), col = "skyblue", type = "l", lwd = 2)
+  #zeta.distribution gamma = 2 line
+  res <- unlist(lapply(seq, function(k) zeta.distribution(k = k, gamma = 2)))
+  lines(seq, res * max(table(x)), col = "red", type = "l", lwd = 2)
+  #zeta.distribution.right.trucated line
+  res <- unlist(lapply(seq, function(k) zeta.distribution.right.trucated(k = k, gamma = as.numeric(params$gamma2), k_max = as.numeric(params$k_max))))
+  lines(seq, res * max(table(x)), col = "green", type = "l", lwd = 2)
+  
+  legend_labels <- c("geometric.distribution", "poisson.distribution", "zeta.distribution", "zeta.distribution gamma=2", "zeta.distribution.right.trucated")
+  legend("topright", legend = legend_labels, col = c("yellow", "purple", "skyblue", "red", "green"), lty = 2, bty = "n")
+  
+  dev.off()
+
+
+}
+
 ```
 
-```{r cars}
 
+# CHECKING METHODS
+
+```{r}
+#save all the data into a dataframe
+data_dir <- "./samples_from_discrete_distributions/data/"
+data_samples <- data.frame(file = character(), degree_sequence = numeric())
+files <- unlist(lapply(list.files(data_dir), function(x) gsub( ".txt" , "", x)))
+files <- unlist(lapply(files, function(x) gsub( "sample_of_" , "", x)))
+
+for (f in list.files(data_dir)){
+  degree_sequence <- read.table(paste0(data_dir, f),header = FALSE)$V1
+  file <- gsub(".txt" , "", f)
+  file <- gsub("sample_of_" , "", file)
+
+  data_samples <- rbind(data_samples, data.frame(file = file, degree_sequence = degree_sequence))
+}
+
+table3_samples <- data.frame(
+  file = character(),
+  `lambda` = numeric(), 
+  `q` = numeric(),
+  `gamma1` = numeric(),
+  `gamma2` = numeric(),
+  `k_max` = numeric()
+  )
+
+table4_samples <- data.frame(
+  file = character(),
+  `AIC Poisson` = numeric(), 
+  `AIC Dis.Geometric` = numeric(),
+  `AIC Zeta` = numeric(),
+  `AIC Zeta.Gamma=2` = numeric(),
+  `AIC Zeta_rigth_truc` = numeric()
+  )
+
+i = 1
+for(f in files){
+  try({
+      x <- data_samples[data_samples$file == f,]$degree_sequence
+      res <- best_param_values(x)
+      table3_samples[i,] <- c(f, unlist(res[1]))
+      res2 <- unlist(res[2]) - min(unlist(res[2])) #incremental AIC
+      table4_samples[i,] <- c(f, res2)
+      i <- i + 1
+  }
+  )
+}
+
+table3_samples
+table4_samples
 ```
 
-```{r cars}
 
+# EXPORTING TABLES TO LATEX
+```{r}
+library(xtable)
+
+round_table <- function(df){
+  cols <- colnames(df)[-1]
+  df[cols] <- lapply(df[cols], as.numeric)
+  df[cols] <- lapply(df[cols], function(x) round(x, digits = 4))
+  return(df)
+
+}
+table_latex <- xtable(round_table(table1))
+print.xtable(table_latex, file = "./latex_files/table1.tex", include.rownames = FALSE)
+table_latex <- xtable(round_table(table3))
+print.xtable(table_latex, file = "./latex_files/table3.tex", include.rownames = FALSE)
+table_latex <- xtable(round_table(table4))
+print.xtable(table_latex, file = "./latex_files/table4.tex", include.rownames = FALSE)
+table_latex <- xtable(round_table(table3_samples))
+print.xtable(table_latex, file = "./latex_files/table3_samples.tex", include.rownames = FALSE)
+table_latex <- xtable(round_table(table4_samples))
+print.xtable(table_latex, file = "./latex_files/table4_samples.tex", include.rownames = FALSE)
 ```
 
-```{r cars}
 
-```
