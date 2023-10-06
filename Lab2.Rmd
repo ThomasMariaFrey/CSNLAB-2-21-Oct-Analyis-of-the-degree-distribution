@@ -565,6 +565,8 @@ table_latex <- xtable(table4_samples)
 print.xtable(table_latex, file = "./latex_files/table4_samples.tex", include.rownames = FALSE)
 table_latex <- xtable(table4_with_altmann)
 print.xtable(table_latex, file = "./latex_files/table4_with_altmann.tex", include.rownames = FALSE)
+table_latex <- xtable(best_models_parameters)
+print.xtable(table_latex, file = "./latex_files/best_models_parameters.tex", include.rownames = FALSE)
 ```
 
 
